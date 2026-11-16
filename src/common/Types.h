@@ -40,6 +40,7 @@ struct Grid {
 // 경로 탐색 결과
 struct Route {
     DynamicArray<double> lats, lngs;  // 출발 → 도착 순서의 좌표
+    DynamicArray<double> pm25s;       // 칸별 초미세먼지 (lats와 같은 순서, 웹에서 구간 색칠용. 비어 있어도 됨)
     double distance = 0.0;            // 총 거리 (m)
     double exposure = 0.0;            // 미세먼지 노출량 (거리 × 농도 합)
     double minutes = 0.0;             // 예상 소요 시간 (분)

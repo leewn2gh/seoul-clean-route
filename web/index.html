@@ -10,18 +10,38 @@
 <body>
   <header class="toolbar">
     <h1>Seoul Clean Route</h1>
-    <select id="period">
-      <option value="2025-02">2025년 2월</option>
-      <option value="2025-05">2025년 5월</option>
-      <option value="2025-08">2025년 8월</option>
-      <option value="2025-11">2025년 11월</option>
-    </select>
-    <input id="search" type="text" placeholder="지역명 검색">
+    <span id="mode" class="mode"></span>
   </header>
   <main>
     <div id="map"></div>
     <aside id="panel">
-      <section id="result"><h2>경로 비교</h2><p>불러오는 중…</p></section>
+      <section class="form">
+        <label class="field">
+          <span>기간</span>
+          <select id="period">
+            <option value="2025-02">2025년 2월</option>
+            <option value="2025-05">2025년 5월</option>
+            <option value="2025-08">2025년 8월</option>
+            <option value="2025-11">2025년 11월</option>
+          </select>
+        </label>
+        <label class="field place">
+          <span><i class="dot start"></i>출발</span>
+          <input id="start" type="text" placeholder="지역명 또는 지도 클릭" autocomplete="off">
+          <ul class="suggest" data-for="start"></ul>
+        </label>
+        <label class="field place">
+          <span><i class="dot goal"></i>도착</span>
+          <input id="goal" type="text" placeholder="지역명 또는 지도 클릭" autocomplete="off">
+          <ul class="suggest" data-for="goal"></ul>
+        </label>
+        <label class="field">
+          <span>미세먼지 반영 <b id="alphaValue">1.0</b></span>
+          <input id="alpha" type="range" min="0" max="3" step="0.5" value="1">
+        </label>
+        <p class="hint">지도를 클릭하면 출발 → 도착 순서로 정해집니다. 점을 끌어서 옮길 수도 있습니다.</p>
+      </section>
+      <section id="result"><h2>경로 비교</h2><p>출발지와 도착지를 정해 주세요.</p></section>
       <section id="ranking"><h2>Top / Worst 지역</h2></section>
     </aside>
   </main>

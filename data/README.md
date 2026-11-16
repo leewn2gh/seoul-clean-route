@@ -20,6 +20,9 @@
 - **빈칸 = 측정값 없음** (점검·고장). 평균 낼 때 빼야 합니다.
 - 2월 16,800행 (25곳 × 28일 × 24시간)
 
+### sdot_*, simple_*, osm_walk.csv (최종 발표용)
+`scripts/README.md` 참고. 형식은 위 air·stations 파일과 같고, S-DoT 파일에는 `temp,humidity,wind_dir,wind_speed` 열이 더 있습니다.
+
 ### stations.csv (측정소 위치)
 출처: 서울시 대기오염 측정소 정보 (OA-23039), 좌표는 GRS80 UTM-K(EPSG:5179)를 위도·경도로 변환
 

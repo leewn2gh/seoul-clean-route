@@ -1,27 +1,222 @@
 // 담당: 이준호
-// 중간발표 데모: C++ 프로그램(./build/app)이 만든 web/data 파일을 읽어 지도에 표시
-//   grid.geojson   칸별 미세먼지
-//   routes.geojson 최적 경로(best) + 최단 경로(shortest)
-//   ranking.json   Top / Worst 지역
-// 최종: WebAssembly(app.js) 함수를 직접 호출하도록 변경 예정
-const map = L.map('map').setView([37.5665, 126.9780], 11);
+// 웹 화면. 두 가지 방식으로 동작합니다.
+//  1) 실시간: WebAssembly(app.js, app.wasm)가 있으면 C++ 함수(src/core/Api.cpp)를 바로 불러서
+//     기간·출발·도착·미세먼지 반영 비중을 바꿀 때마다 경로를 새로 찾음
+//  2) 저장 파일: app.js가 없으면 ./build/app 이 만든 web/data 파일(grid.json, routes.geojson, ranking.json)을 표시
+const SEOUL = [37.5665, 126.9780];
+const map = L.map('map').setView(SEOUL, 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18,
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-// 미세먼지(PM2.5) 농도 → 색. 데이터의 최솟값~최댓값을 파랑 → 초록 → 주황 → 빨강으로 이어서 칠함
+const $ = id => document.getElementById(id);
+const setHTML = (id, html) => { $(id).innerHTML = html; };
+
+// ───────── 색 ─────────
+// 데이터의 최솟값~최댓값을 파랑 → 초록 → 주황 → 빨강으로 이어서 칠함
 // (한 달 평균은 값 차이가 작아서 환경부 4단계 기준으로 칠하면 서울 전체가 한 색이 됨)
 const RAMP = [[47, 128, 237], [39, 174, 96], [242, 153, 74], [235, 87, 87]];
 let pmMin = 0, pmMax = 100;
-function pmColor(pm) {
+function pmRGB(pm) {
   let t = pmMax > pmMin ? (pm - pmMin) / (pmMax - pmMin) : 0.5;
   t = Math.min(1, Math.max(0, t)) * (RAMP.length - 1);
   const i = Math.min(Math.floor(t), RAMP.length - 2), f = t - i;
-  const c = RAMP[i].map((v, k) => Math.round(v + (RAMP[i + 1][k] - v) * f));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
+  return RAMP[i].map((v, k) => Math.round(v + (RAMP[i + 1][k] - v) * f));
 }
 
+// ───────── 격자 (칸별 미세먼지) ─────────
+let gridLayer = null, legend = null;
+function drawGrid(g) {
+  if (gridLayer) map.removeLayer(gridLayer);
+  if (!g || !g.values) return;
+  pmMin = g.min; pmMax = g.max;
+  // 칸 하나 = 그림의 점 하나. 0행이 남쪽이라 위아래를 뒤집어서 그림
+  const cv = document.createElement('canvas');
+  cv.width = g.cols; cv.height = g.rows;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(g.cols, g.rows);
+  for (let r = 0; r < g.rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const v = g.values[r * g.cols + c];
+      const p = ((g.rows - 1 - r) * g.cols + c) * 4;
+      if (v === null) { img.data[p + 3] = 0; continue; }
+      const [R, G, B] = pmRGB(v);
+      img.data[p] = R; img.data[p + 1] = G; img.data[p + 2] = B; img.data[p + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const bounds = [[g.minLat, g.minLng], [g.minLat + g.rows * g.cellLat, g.minLng + g.cols * g.cellLng]];
+  gridLayer = L.imageOverlay(cv.toDataURL(), bounds, { opacity: 0.45, interactive: false }).addTo(map);
+  gridLayer.bringToBack();
+  drawLegend();
+}
+
+function drawLegend() {
+  if (legend) map.removeControl(legend);
+  legend = L.control({ position: 'bottomleft' });
+  legend.onAdd = () => {
+    const div = L.DomUtil.create('div', 'legend');
+    const stops = [0, 1 / 3, 2 / 3, 1].map(t => `rgb(${pmRGB(pmMin + (pmMax - pmMin) * t).join(',')}) ${t * 100}%`);
+    div.innerHTML = `<b>PM2.5 (㎍/㎥)</b>
+      <div class="bar" style="background:linear-gradient(to right, ${stops.join(',')})"></div>
+      <div class="ends"><span>${pmMin.toFixed(0)}</span><span>${pmMax.toFixed(0)}</span></div>`;
+    return div;
+  };
+  legend.addTo(map);
+}
+
+// ───────── 경로 ─────────
+let routeLayers = [];
+function drawRoutes(fc) {
+  routeLayers.forEach(l => map.removeLayer(l));
+  routeLayers = [];
+  const byType = {};
+  fc.features.forEach(f => { byType[f.properties.type] = f; });
+  // 최단 경로를 먼저 그리고 최적 경로를 위에 겹쳐 그림 (흰 테두리로 지도 색과 구분)
+  if (byType.shortest) routeLayers.push(L.geoJSON(byType.shortest, { style: { color: '#555', weight: 4, dashArray: '6 6' } }).addTo(map));
+  if (byType.best) {
+    routeLayers.push(L.geoJSON(byType.best, { style: { color: '#fff', weight: 9, opacity: 0.9 } }).addTo(map));
+    routeLayers.push(L.geoJSON(byType.best, { style: { color: '#2F6FEB', weight: 5 } }).addTo(map));
+  }
+  return byType;
+}
+
+function showCompare(byType) {
+  const b = byType.best && byType.best.properties;
+  const s = byType.shortest && byType.shortest.properties;
+  if (!b || !s) return;
+  const cut = s.exposure > 0 ? (s.exposure - b.exposure) / s.exposure * 100 : 0;
+  const more = s.distance > 0 ? (b.distance - s.distance) / s.distance * 100 : 0;
+  const km = m => (m / 1000).toFixed(2) + ' km';
+  const hasProfile = b.pm25s && s.pm25s;
+  setHTML('result', `
+    <h2>경로 비교</h2>
+    <table class="cmp">
+      <tr><th></th><th><span class="sw best"></span>최적</th><th><span class="sw short"></span>최단</th></tr>
+      <tr><td>거리</td><td>${km(b.distance)}</td><td>${km(s.distance)}</td></tr>
+      <tr><td>소요 시간</td><td>${Math.round(b.minutes)}분</td><td>${Math.round(s.minutes)}분</td></tr>
+      <tr><td>노출량</td><td>${Math.round(b.exposure).toLocaleString()}</td><td>${Math.round(s.exposure).toLocaleString()}</td></tr>
+    </table>
+    <p class="summary">미세먼지 노출 <b>${cut.toFixed(1)}% 감소</b> · 거리 ${more >= 0 ? '+' : ''}${more.toFixed(1)}%</p>
+    ${hasProfile ? '<canvas id="profile" class="profile"></canvas><p class="hint">경로를 따라 지나는 칸의 PM2.5 (왼쪽 출발 → 오른쪽 도착)</p>' : ''}`);
+  if (hasProfile) drawProfile($('profile'), b.pm25s, s.pm25s);
+}
+
+// 경로를 따라 지나는 칸의 미세먼지를 작은 선 그래프로
+function drawProfile(cv, best, shortest) {
+  const w = cv.width = cv.clientWidth * 2, h = cv.height = cv.clientHeight * 2;
+  const ctx = cv.getContext('2d');
+  const all = best.concat(shortest).filter(v => v >= 0);
+  const lo = Math.min(...all), hi = Math.max(...all), pad = 8;
+  const y = v => h - pad - (hi > lo ? (v - lo) / (hi - lo) : 0.5) * (h - pad * 2);
+  const line = (vals, color, dash, width) => {
+    ctx.beginPath(); ctx.setLineDash(dash); ctx.strokeStyle = color; ctx.lineWidth = width;
+    vals.forEach((v, i) => { const x = pad + i / Math.max(1, vals.length - 1) * (w - pad * 2); i ? ctx.lineTo(x, y(v)) : ctx.moveTo(x, y(v)); });
+    ctx.stroke();
+  };
+  line(shortest, '#555', [10, 8], 3);
+  line(best, '#2F6FEB', [], 4);
+  ctx.setLineDash([]); ctx.fillStyle = '#888'; ctx.font = '20px sans-serif';
+  ctx.textAlign = 'right'; ctx.fillText(hi.toFixed(1), w - pad, 22); ctx.fillText(lo.toFixed(1), w - pad, h - pad);
+}
+
+function showRanking(rank) {
+  if (!rank) return;
+  const list = (items, title) => `<div><h3>${title}</h3><ol>${items.map(i => `<li>${i.name}<span>${i.score.toFixed(1)}</span></li>`).join('')}</ol></div>`;
+  setHTML('ranking', `<h2>Top / Worst 지역 <small>PM2.5 평균</small></h2>
+    <div class="rank">${list(rank.top, '깨끗한 곳')}${list(rank.worst, '나쁜 곳')}</div>`);
+}
+
+// ───────── 실시간 (WebAssembly) ─────────
+let api = null;   // { call(name, ...args) }
+const points = { start: null, goal: null };
+const markers = { start: null, goal: null };
+
+function setPoint(which, lat, lng, name) {
+  points[which] = { lat, lng };
+  $(which).value = name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  if (markers[which]) markers[which].setLatLng([lat, lng]);
+  else {
+    markers[which] = L.marker([lat, lng], {
+      draggable: true,
+      icon: L.divIcon({ className: '', html: `<i class="dot ${which}" style="width:16px;height:16px;border:3px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.5)"></i>`, iconSize: [22, 22], iconAnchor: [11, 11] })
+    }).addTo(map);
+    markers[which].on('dragend', e => {
+      const p = e.target.getLatLng();
+      setPoint(which, p.lat, p.lng);
+      findRoute();
+    });
+  }
+}
+
+function findRoute() {
+  if (!api || !points.start || !points.goal) return;
+  const alpha = parseFloat($('alpha').value);
+  const res = JSON.parse(api.call('api_find_route', points.start.lat, points.start.lng, points.goal.lat, points.goal.lng, alpha));
+  if (res.ok === false) {
+    routeLayers.forEach(l => map.removeLayer(l)); routeLayers = [];
+    setHTML('result', `<h2>경로 비교</h2><p class="error">${res.error}</p>`);
+    return;
+  }
+  showCompare(drawRoutes(res));
+}
+
+function changePeriod() {
+  const res = JSON.parse(api.call('api_set_period', $('period').value));
+  if (res.ok === false) { setHTML('result', `<h2>경로 비교</h2><p class="error">${res.error}</p>`); return; }
+  drawGrid(JSON.parse(api.call('api_get_grid', 1)));
+  showRanking(JSON.parse(api.call('api_get_ranking', 5)));
+  findRoute();
+}
+
+// 지역명 자동완성 (트라이)
+function setupSearch(which) {
+  const input = $(which), list = document.querySelector(`.suggest[data-for="${which}"]`);
+  let items = [];
+  const close = () => { list.style.display = 'none'; };
+  const choose = p => { setPoint(which, p.lat, p.lng, p.name); close(); findRoute(); };
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    items = q ? JSON.parse(api.call('api_search', q, 8)) : [];
+    list.innerHTML = items.map((p, i) => `<li data-i="${i}">${p.name}</li>`).join('');
+    list.style.display = items.length ? 'block' : 'none';
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && items.length) { e.preventDefault(); choose(items[0]); } });
+  list.addEventListener('mousedown', e => { const li = e.target.closest('li'); if (li) choose(items[+li.dataset.i]); });
+  input.addEventListener('blur', () => setTimeout(close, 150));
+}
+
+async function startLive(createApp) {
+  const Module = await createApp();
+  api = { call: (name, ...args) => Module.ccall(name, 'string', args.map(a => typeof a === 'string' ? 'string' : 'number'), args) };
+  const init = JSON.parse(api.call('api_init', ''));
+  if (init.ok === false) throw new Error(init.error);
+  $('mode').textContent = '실시간 탐색 (WebAssembly)';
+  setupSearch('start');
+  setupSearch('goal');
+  $('period').addEventListener('change', changePeriod);
+  $('alpha').addEventListener('input', () => { $('alphaValue').textContent = parseFloat($('alpha').value).toFixed(1); });
+  $('alpha').addEventListener('change', findRoute);
+  map.on('click', e => {
+    // 출발이 없으면 출발, 도착이 없으면 도착, 둘 다 있으면 출발부터 다시
+    const which = !points.start ? 'start' : !points.goal ? 'goal' : 'start';
+    if (which === 'start' && points.goal) {
+      points.goal = null; map.removeLayer(markers.goal); markers.goal = null; $('goal').value = '';
+      routeLayers.forEach(l => map.removeLayer(l)); routeLayers = [];
+      setHTML('result', '<h2>경로 비교</h2><p>도착지를 정해 주세요.</p>');
+    }
+    setPoint(which, e.latlng.lat, e.latlng.lng);
+    findRoute();
+  });
+  changePeriod();
+  // 처음 열었을 때 예시 경로 (종로구 → 강남구)
+  setPoint('start', 37.571973, 127.005082, '종로구');
+  setPoint('goal', 37.518147, 127.047296, '강남구');
+  findRoute();
+}
+
+// ───────── 저장 파일 (WebAssembly 없을 때) ─────────
 async function loadJSON(url) {
   try {
     const res = await fetch(url, { cache: 'no-store' });
@@ -29,78 +224,47 @@ async function loadJSON(url) {
   } catch (e) { return null; }
 }
 
-function setHTML(id, html) { document.getElementById(id).innerHTML = html; }
-
-async function main() {
+async function startStatic() {
+  $('mode').textContent = '저장된 결과 보기 (./build/app 실행 결과)';
+  ['period', 'start', 'goal', 'alpha'].forEach(id => { $(id).disabled = true; });
+  document.querySelector('.hint').textContent = '실시간 탐색은 WebAssembly 빌드(make wasm)나 배포된 페이지에서 됩니다.';
   const [grid, routes, ranking] = await Promise.all([
-    loadJSON('data/grid.geojson'), loadJSON('data/routes.geojson'), loadJSON('data/ranking.json')
+    loadJSON('data/grid.json'), loadJSON('data/routes.geojson'), loadJSON('data/ranking.json')
   ]);
-
   if (!grid && !routes) {
     setHTML('result', '<h2>경로 비교</h2><p>결과 파일이 없습니다.<br>레포 폴더에서 <code>./build/app 출발지 목적지</code> 를 먼저 실행하세요.</p>');
+    return;
   }
-
-  if (grid) {
-    const values = grid.features.map(f => f.properties.pm25);
-    pmMin = Math.min(...values);
-    pmMax = Math.max(...values);
-    L.geoJSON(grid, {
-      style: f => ({ stroke: false, fillColor: pmColor(f.properties.pm25), fillOpacity: 0.35 }),
-      onEachFeature: (f, layer) => layer.bindTooltip(`PM2.5 ${f.properties.pm25} ㎍/㎥`)
-    }).addTo(map);
-  }
-
+  drawGrid(grid);
   if (routes) {
-    const byType = {};
-    routes.features.forEach(f => { byType[f.properties.type] = f; });
-    // 최단 경로를 먼저 그리고, 최적 경로를 위에 겹쳐 그림
-    const shortLayer = byType.shortest && L.geoJSON(byType.shortest, { style: { color: '#555', weight: 4, dashArray: '6 6' } }).addTo(map);
-    const bestLayer = byType.best && L.geoJSON(byType.best, { style: { color: '#0A9A0A', weight: 5 } }).addTo(map);
-    if (bestLayer) map.fitBounds(bestLayer.getBounds().pad(0.2));
-
-    const b = byType.best && byType.best.properties;
-    const s = byType.shortest && byType.shortest.properties;
+    const byType = drawRoutes(routes);
+    showCompare(byType);
     const coords = byType.best ? byType.best.geometry.coordinates : [];
     if (coords.length) {
-      L.circleMarker([coords[0][1], coords[0][0]], { radius: 7, color: '#0A9A0A', fillOpacity: 1 }).addTo(map).bindTooltip('출발');
-      const g = coords[coords.length - 1];
-      L.circleMarker([g[1], g[0]], { radius: 7, color: '#EB5757', fillOpacity: 1 }).addTo(map).bindTooltip('도착');
-    }
-    if (b && s) {
-      const cut = s.exposure > 0 ? (s.exposure - b.exposure) / s.exposure * 100 : 0;
-      const more = s.distance > 0 ? (b.distance - s.distance) / s.distance * 100 : 0;
-      const km = m => (m / 1000).toFixed(2) + ' km';
-      setHTML('result', `
-        <h2>경로 비교</h2>
-        <table class="cmp">
-          <tr><th></th><th><span class="sw best"></span>최적</th><th><span class="sw short"></span>최단</th></tr>
-          <tr><td>거리</td><td>${km(b.distance)}</td><td>${km(s.distance)}</td></tr>
-          <tr><td>소요 시간</td><td>${Math.round(b.minutes)}분</td><td>${Math.round(s.minutes)}분</td></tr>
-          <tr><td>노출량</td><td>${Math.round(b.exposure).toLocaleString()}</td><td>${Math.round(s.exposure).toLocaleString()}</td></tr>
-        </table>
-        <p class="summary">미세먼지 노출 <b>${cut.toFixed(1)}% 감소</b> · 거리 ${more >= 0 ? '+' : ''}${more.toFixed(1)}%</p>`);
+      const s = coords[0], g = coords[coords.length - 1];
+      setPoint('start', s[1], s[0]); setPoint('goal', g[1], g[0]);
+      Object.values(markers).forEach(m => m.dragging.disable());
+      map.fitBounds(routeLayers[routeLayers.length - 1].getBounds().pad(0.2));
     }
   }
-
-  if (ranking) {
-    const list = items => items.map(r => `<li>${r.name} <span>${r.score.toFixed(1)}</span></li>`).join('');
-    setHTML('ranking', `
-      <h2>Top / Worst 지역 <small>PM2.5 평균</small></h2>
-      <div class="rank"><div><h3>깨끗한 곳</h3><ol>${list(ranking.top)}</ol></div>
-      <div><h3>나쁜 곳</h3><ol>${list(ranking.worst)}</ol></div></div>`);
-  }
-
-  // 범례
-  const legend = L.control({ position: 'bottomleft' });
-  legend.onAdd = () => {
-    const div = L.DomUtil.create('div', 'legend');
-    const stops = [0, 0.25, 0.5, 0.75, 1].map(t => pmColor(pmMin + (pmMax - pmMin) * t)).join(',');
-    div.innerHTML = '<b>PM2.5 (㎍/㎥)</b>' +
-      `<div class="bar" style="background:linear-gradient(to right,${stops})"></div>` +
-      `<div class="ends"><span>${pmMin.toFixed(0)}</span><span>${pmMax.toFixed(0)}</span></div>`;
-    return div;
-  };
-  legend.addTo(map);
+  showRanking(ranking);
 }
 
-main();
+// app.js가 있으면 실시간, 없거나 실패하면 저장 파일
+function loadScript(src) {
+  return new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = fail;
+    document.head.appendChild(s);
+  });
+}
+
+(async () => {
+  try {
+    await loadScript('app.js');
+    await startLive(window.createApp);
+  } catch (e) {
+    console.log('WebAssembly 없이 저장 파일로 표시:', e.message || e);
+    await startStatic();
+  }
+})();
