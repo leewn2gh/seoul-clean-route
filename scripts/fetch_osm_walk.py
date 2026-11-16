@@ -17,7 +17,12 @@ import time
 import urllib.parse
 import urllib.request
 
-OVERPASS = "https://overpass-api.de/api/interpreter"
+# 서버가 바쁘면 502 Bad Gateway / 504 / 429가 나므로 다른 공용 서버로 번갈아 시도
+SERVERS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
 # buildGrid의 격자 범위와 같음
 MIN_LAT, MAX_LAT = 37.41, 37.72
 MIN_LNG, MAX_LNG = 126.73, 127.27
@@ -43,19 +48,21 @@ def fetch(tile_path, q):
         with open(tile_path, encoding="utf-8") as f:
             return json.load(f)
     data = urllib.parse.urlencode({"data": q}).encode()
-    for attempt in range(4):
+    for attempt in range(9):
+        server = SERVERS[attempt % len(SERVERS)]
         try:
-            req = urllib.request.Request(OVERPASS, data=data, headers={"User-Agent": "seoul-clean-route (student project)"})
+            req = urllib.request.Request(server, data=data, headers={"User-Agent": "seoul-clean-route (student project)"})
             with urllib.request.urlopen(req, timeout=400) as res:
                 body = res.read().decode("utf-8")
             result = json.loads(body)
             with open(tile_path, "w", encoding="utf-8") as f:
                 f.write(body)
             return result
-        except Exception as e:  # 서버가 바쁘면 잠시 쉬고 다시
-            print(f"    실패 ({e}), {30 * (attempt + 1)}초 뒤 다시 시도")
-            time.sleep(30 * (attempt + 1))
-    sys.exit("Overpass 서버에서 받지 못했습니다. 잠시 뒤 다시 실행해 주세요.")
+        except Exception as e:  # 서버가 바쁘면 다른 서버로, 한 바퀴 돌 때마다 더 오래 쉼
+            wait = 20 * (attempt // len(SERVERS) + 1)
+            print(f"    {server.split('/')[2]} 실패 ({e}), {wait}초 뒤 다른 서버로 다시 시도")
+            time.sleep(wait)
+    sys.exit("Overpass 서버에서 받지 못했습니다. 이미 받은 조각은 저장돼 있으니 잠시 뒤 다시 실행하면 이어서 받습니다.")
 
 
 def main():
