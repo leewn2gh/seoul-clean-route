@@ -7,7 +7,7 @@
 
 | 스크립트 | 만드는 파일 | 읽는 쪽 |
 |---|---|---|
-| `fetch_osm_walk.py` | `osm_walk.csv` (보행로 선분 `lat1,lng1,lat2,lng2`) | 김재겸 `applyRoads` |
+| `fetch_osm_walk.py` | `osm_walk.csv` (보행로 선분 `lat1,lng1,lat2,lng2`, 약 115만 줄·44MB) | 김재겸 `applyRoads` |
 | `prep_sensors.py sdot 위치파일 측정파일...` | `sdot_stations.csv`, `sdot_2025_MM.csv` | 방지혁 `loadStations(.., SDOT)`, `loadSdot` |
 | `prep_sensors.py simple 위치파일 측정파일...` | `simple_stations.csv`, `simple_2025_MM.csv` | 방지혁 `loadStations(.., SIMPLE)`, `loadSimple` |
 

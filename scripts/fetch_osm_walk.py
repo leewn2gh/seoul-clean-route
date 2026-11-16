@@ -65,7 +65,7 @@ def fetch(tile_path, q):
     return None   # 이 크기로는 계속 실패 → 더 잘게 나눠서 받음
 
 
-def fetch_area(out, seen, name, s, w, n, e, depth):
+def fetch_area(out, seen, segs, name, s, w, n, e, depth):
     """한 조각을 받아 선분을 쓰고, 선분 수를 돌려줌. 계속 실패하면 4개로 나눠서 다시 (최대 2번)"""
     tile = os.path.join(RAW_DIR, name + ".json")
     cached = os.path.exists(tile)
@@ -76,7 +76,7 @@ def fetch_area(out, seen, name, s, w, n, e, depth):
         print(f"    {name}: 너무 커서 4개로 나눠서 받습니다")
         ms, mw = (s + n) / 2, (w + e) / 2
         parts = [(s, w, ms, mw), (s, mw, ms, e), (ms, w, n, mw), (ms, mw, n, e)]
-        return sum(fetch_area(out, seen, f"{name}_{k}", *box, depth=depth + 1) for k, box in enumerate(parts))
+        return sum(fetch_area(out, seen, segs, f"{name}_{k}", *box, depth=depth + 1) for k, box in enumerate(parts))
     count = 0
     for way in result.get("elements", []):
         if way.get("type") != "way" or way["id"] in seen:
@@ -84,7 +84,12 @@ def fetch_area(out, seen, name, s, w, n, e, depth):
         seen.add(way["id"])
         pts = way.get("geometry") or []
         for a, b in zip(pts, pts[1:]):
-            out.write(f"{a['lat']:.6f},{a['lon']:.6f},{b['lat']:.6f},{b['lon']:.6f}\n")
+            # 소수점 5자리(약 1m)면 10m 격자에도 충분, 파일 크기를 줄임
+            k = (round(a["lat"], 5), round(a["lon"], 5), round(b["lat"], 5), round(b["lon"], 5))
+            if k[:2] == k[2:] or k in segs or (k[2], k[3], k[0], k[1]) in segs:
+                continue   # 길이 0이거나 이미 쓴 선분 (조각 경계에서 겹친 길)
+            segs.add(k)
+            out.write("%.5f,%.5f,%.5f,%.5f\n" % k)
             count += 1
     if not cached:
         time.sleep(2)   # 공용 서버 배려
@@ -94,6 +99,7 @@ def fetch_area(out, seen, name, s, w, n, e, depth):
 def main():
     os.makedirs(RAW_DIR, exist_ok=True)
     seen = set()          # 조각 경계에서 같은 길이 두 번 나오는 것 방지
+    segs = set()          # 같은 선분 중복 방지
     segments = 0
     dlat = (MAX_LAT - MIN_LAT) / TILES
     dlng = (MAX_LNG - MIN_LNG) / TILES
@@ -104,7 +110,7 @@ def main():
                 s, n = MIN_LAT + i * dlat, MIN_LAT + (i + 1) * dlat
                 w, e = MIN_LNG + j * dlng, MIN_LNG + (j + 1) * dlng
                 print(f"  조각 {i * TILES + j + 1}/{TILES * TILES} 받는 중")
-                segments += fetch_area(out, seen, f"tile_{i}_{j}", s, w, n, e, depth=0)
+                segments += fetch_area(out, seen, segs, f"tile_{i}_{j}", s, w, n, e, depth=0)
     size = os.path.getsize(OUT) / 1e6
     print(f"완료: 길 {len(seen):,}개, 선분 {segments:,}개 → {OUT} ({size:.1f} MB)")
 
