@@ -19,3 +19,6 @@ Thumbs.db
 # 프로그램이 만드는 결과 파일 (./build/app 실행 시 생성)
 web/data/*.geojson
 web/data/*.json
+
+# 파이썬 캐시
+__pycache__/
