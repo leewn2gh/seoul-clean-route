@@ -18,7 +18,7 @@
 
 | 폴더 | 담당 | 내용 | 자료구조 |
 |---|---|---|---|
-| `src/common`, `src/search`, `src/main.cpp`, `web/` | 이준호 | 공통 형식, 통합, 웹, 지역명 검색 | 트라이 |
+| `src/common`, `src/core`, `src/search`, `src/main.cpp`, `web/`, `scripts/` | 이준호 | 공통 형식, 통합, 웹, 지역명 검색, 데이터 전처리 | 트라이 |
 | `src/data` | 방지혁 | CSV 읽기, 기간 탐색, 관측소 평균, 격자 보간 | AVL 트리, 해시 테이블 |
 | `src/graph` | 김재겸 | 동적 배열, 격자 그래프, 가중치, (최종) 바람 예측 | 동적 배열, 격자 그래프 |
 | `src/route` | 조효근 | 다익스트라, 출발·도착 칸 보정, 경로 복원, 경로 비교 | 최소 힙, 스택, 큐 |
@@ -69,15 +69,22 @@ make test     # tests/ 폴더의 테스트 빌드·실행
 make wasm     # Emscripten(em++)으로 WebAssembly 빌드 → web/app.js, web/app.wasm
 ```
 
-중간발표 데모 (레포 맨 위 폴더에서 실행)
+콘솔 실행 (레포 맨 위 폴더에서)
 
 ```bash
-./build/app 마포 송파 1      # 출발지, 목적지(앞 글자만 써도 됨), alpha(미세먼지 반영 비중, 생략하면 1)
-python3 -m http.server -d web   # 브라우저에서 http://localhost:8000 열기
+./build/app 마포 송파 1 2025-05   # 출발지, 목적지(앞 글자만 써도 됨), alpha(미세먼지 반영 비중, 생략 1), 기간(생략 2025-02)
+python3 -m http.server -d web     # 브라우저에서 http://localhost:8000 열기
 ```
 
-`./build/app`이 `web/data/`에 `grid.geojson`(칸별 미세먼지), `routes.geojson`(최적·최단 경로), `ranking.json`(Top/Worst 5)을 만들고, 웹 화면이 이 파일을 읽어 지도에 표시합니다.
-최종 결과물은 GitHub Pages로 배포합니다.
+웹 화면은 두 가지로 동작합니다.
+
+- **실시간**: `make wasm`으로 만든 `web/app.js`가 있으면 C++ 함수(`src/core/Api.cpp`)를 바로 불러서, 기간·출발·도착·미세먼지 반영 비중을 바꿀 때마다 경로를 새로 찾습니다. 지도를 클릭하거나 지역명을 검색해서 출발·도착을 정합니다.
+- **저장 파일**: `app.js`가 없으면 `./build/app`이 만든 `web/data/`의 `grid.json`(칸별 미세먼지), `routes.geojson`(최적·최단 경로), `ranking.json`(Top/Worst 5)을 표시합니다.
+
+`main`에 합쳐지면 GitHub Actions(`.github/workflows/pages.yml`)가 WebAssembly로 빌드해서 GitHub Pages에 배포합니다.
+처음 한 번 저장소 **Settings → Pages → Source**를 **GitHub Actions**로 바꿔야 합니다. Pull Request에서는 빌드·테스트만 돌아갑니다.
+
+데이터 전처리(S-DoT, 간이측정망, OSM 보행로)는 `scripts/README.md`를 보세요.
 
 ## 사용 데이터
 
