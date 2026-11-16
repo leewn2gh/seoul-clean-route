@@ -1,0 +1,52 @@
+# main에 push하면 WebAssembly로 빌드해서 GitHub Pages에 배포합니다.
+# Pull Request에서는 빌드·테스트만 해서, 합치기 전에 wasm 빌드가 깨지지 않았는지 확인합니다.
+# 처음 한 번: GitHub 저장소 Settings → Pages → Source를 "GitHub Actions"로 바꿔 주세요.
+name: Deploy web
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 콘솔 버전 빌드와 테스트
+        run: make && make test
+
+      - name: Emscripten 설치
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+
+      - name: WebAssembly 빌드 (web/app.js, app.wasm, app.data)
+        run: make wasm
+
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
