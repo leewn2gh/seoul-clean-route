@@ -48,7 +48,7 @@ def fetch(tile_path, q):
         with open(tile_path, encoding="utf-8") as f:
             return json.load(f)
     data = urllib.parse.urlencode({"data": q}).encode()
-    for attempt in range(9):
+    for attempt in range(6):
         server = SERVERS[attempt % len(SERVERS)]
         try:
             req = urllib.request.Request(server, data=data, headers={"User-Agent": "seoul-clean-route (student project)"})
@@ -62,7 +62,33 @@ def fetch(tile_path, q):
             wait = 20 * (attempt // len(SERVERS) + 1)
             print(f"    {server.split('/')[2]} 실패 ({e}), {wait}초 뒤 다른 서버로 다시 시도")
             time.sleep(wait)
-    sys.exit("Overpass 서버에서 받지 못했습니다. 이미 받은 조각은 저장돼 있으니 잠시 뒤 다시 실행하면 이어서 받습니다.")
+    return None   # 이 크기로는 계속 실패 → 더 잘게 나눠서 받음
+
+
+def fetch_area(out, seen, name, s, w, n, e, depth):
+    """한 조각을 받아 선분을 쓰고, 선분 수를 돌려줌. 계속 실패하면 4개로 나눠서 다시 (최대 2번)"""
+    tile = os.path.join(RAW_DIR, name + ".json")
+    cached = os.path.exists(tile)
+    result = fetch(tile, query(s, w, n, e))
+    if result is None:
+        if depth >= 2:
+            sys.exit("Overpass 서버에서 받지 못했습니다. 받은 조각은 저장돼 있으니 잠시 뒤 다시 실행하면 이어서 받습니다.")
+        print(f"    {name}: 너무 커서 4개로 나눠서 받습니다")
+        ms, mw = (s + n) / 2, (w + e) / 2
+        parts = [(s, w, ms, mw), (s, mw, ms, e), (ms, w, n, mw), (ms, mw, n, e)]
+        return sum(fetch_area(out, seen, f"{name}_{k}", *box, depth=depth + 1) for k, box in enumerate(parts))
+    count = 0
+    for way in result.get("elements", []):
+        if way.get("type") != "way" or way["id"] in seen:
+            continue
+        seen.add(way["id"])
+        pts = way.get("geometry") or []
+        for a, b in zip(pts, pts[1:]):
+            out.write(f"{a['lat']:.6f},{a['lon']:.6f},{b['lat']:.6f},{b['lon']:.6f}\n")
+            count += 1
+    if not cached:
+        time.sleep(2)   # 공용 서버 배려
+    return count
 
 
 def main():
@@ -78,19 +104,7 @@ def main():
                 s, n = MIN_LAT + i * dlat, MIN_LAT + (i + 1) * dlat
                 w, e = MIN_LNG + j * dlng, MIN_LNG + (j + 1) * dlng
                 print(f"  조각 {i * TILES + j + 1}/{TILES * TILES} 받는 중")
-                tile = os.path.join(RAW_DIR, f"tile_{i}_{j}.json")
-                cached = os.path.exists(tile)
-                result = fetch(tile, query(s, w, n, e))
-                for way in result.get("elements", []):
-                    if way.get("type") != "way" or way["id"] in seen:
-                        continue
-                    seen.add(way["id"])
-                    pts = way.get("geometry") or []
-                    for a, b in zip(pts, pts[1:]):
-                        out.write(f"{a['lat']:.6f},{a['lon']:.6f},{b['lat']:.6f},{b['lon']:.6f}\n")
-                        segments += 1
-                if not cached:
-                    time.sleep(2)   # 공용 서버 배려
+                segments += fetch_area(out, seen, f"tile_{i}_{j}", s, w, n, e, depth=0)
     size = os.path.getsize(OUT) / 1e6
     print(f"완료: 길 {len(seen):,}개, 선분 {segments:,}개 → {OUT} ({size:.1f} MB)")
 
