@@ -27,13 +27,17 @@ test: $(LIB_OBJS)
 		$(CXX) $(CXXFLAGS) $$t $(LIB_OBJS) -o build/tests/$$name && ./build/tests/$$name || exit 1; \
 	done
 
+# 웹에 실어 보낼 데이터 (페이지를 열 때마다 내려받으므로 필요한 파일만. osm_walk.csv(44MB)는 넣지 않음)
+WASM_FILES = $(wildcard data/processed/stations.csv data/processed/air_*.csv)
+WASM_DATA = $(foreach f,$(WASM_FILES),--preload-file $(f)@/data/$(notdir $(f)))
+
 # WebAssembly 빌드 (Emscripten 필요). 웹은 src/core/Api.cpp의 api_* 함수를 부름 (main은 실행하지 않음)
 wasm:
 	$(EMXX) -std=c++17 -O2 -Isrc $(SRCS) -o web/app.js \
 		-s MODULARIZE=1 -s EXPORT_NAME=createApp -s INVOKE_RUN=0 -s ENVIRONMENT=web \
 		-s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString"]' \
 		-s ALLOW_MEMORY_GROWTH=1 \
-		--preload-file data/processed@/data
+		$(WASM_DATA)
 
 clean:
 	rm -rf build web/app.js web/app.wasm web/app.data
