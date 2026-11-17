@@ -1,4 +1,4 @@
-"""S-DoT, 간이측정망 원본 파일을 프로그램이 읽는 형식으로 바꿉니다.
+"""간이측정망 원본 파일을 프로그램이 읽는 형식으로 바꿉니다. (S-DoT는 prep_sdot.py 사용)
 
 원본 받기 (data/raw/ 아래에 넣기, GitHub에는 올리지 않음)
   S-DoT 환경정보 (OA-15969): https://data.seoul.go.kr/dataList/OA-15969/S/1/datasetView.do
