@@ -10,6 +10,7 @@
 | `fetch_osm_walk.py` | `osm_walk.csv` (보행로 선분 `lat1,lng1,lat2,lng2`, 약 115만 줄·44MB) | 김재겸 `applyRoads` |
 | `prep_sdot.py 위치정보.xlsx 압축푼폴더` | `sdot_stations.csv`(1,142곳), `sdot_2025_MM.csv`(월 약 60만 줄·30MB) | 방지혁 `loadStations(.., SDOT)`, `loadSdot` |
 | `fetch_simple.js` (브라우저 콘솔) → `prep_simple.py data/raw/simple` | `simple_stations.csv`(131곳), `simple_2025_MM.csv`(보정한 초미세먼지) | 방지혁 `loadStations(.., SIMPLE)`, `loadSimple` |
+| `prep_wind.py` | `sdot_wind_2025_MM.csv`(S-DoT에서 풍향·풍속 있는 줄만, 월 약 2MB) | 웹(WebAssembly) 바람 예측용, `App::init`이 sdot 전체가 없을 때 읽음 |
 
 - `fetch_osm_walk.py`는 인터넷으로 OpenStreetMap(Overpass API)에서 직접 받습니다. 받은 원본은 `data/raw/osm/`에 남아서 다시 실행하면 빠릅니다.
 - 간이측정망은 사이트에서 하루·한 시간씩만 조회돼서 `fetch_simple.js`를 대기환경정보 페이지 콘솔에 붙여 넣어 한꺼번에 받습니다. 좌표가 없어 카카오 로컬 API로 주소를 좌표로 바꿉니다(키는 실행할 때 입력, 저장하지 않음).

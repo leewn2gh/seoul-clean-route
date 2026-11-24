@@ -26,6 +26,11 @@ public:
     // 분석 기간을 월 단위로 바꿈: 관측소 평균 → 격자 보간 → 그래프·순위 다시 만듦. 데이터가 없으면 false
     bool setPeriod(int year, int month);
 
+    // 특정 시각 한 시간 값으로 격자를 만듦. ahead > 0이면 그 시각 바람으로 ahead시간 뒤를 추정한 값으로 만듦
+    //   (자치구·간이 측정소 값을 StationGraph::estimateByWind로 옮긴 뒤 보간). 그 시각 데이터가 없으면 false
+    bool setTime(int year, int month, int day, int hour, int ahead);
+    int windCount() const { return winds_.size(); }   // 현재 시각의 바람 센서 수
+
     // 위경도 두 점 사이 최적 경로(alpha)와 최단 경로(alpha = 0). 격자 밖이거나 경로가 없으면 false
     bool findRoute(double sLat, double sLng, double gLat, double gLng, double alpha,
                    Route& best, Route& shortest) const;
@@ -61,6 +66,7 @@ private:
     mutable int lastPops_ = 0;
 
     bool loadRoads();
+    bool rebuild(DynamicArray<Station>& next, int ahead);   // 관측소 값 → (바람 추정) → 격자·그래프
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;

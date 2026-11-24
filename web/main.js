@@ -27,10 +27,11 @@ function pmRGB(pm) {
 
 // ───────── 격자 (칸별 미세먼지) ─────────
 let gridLayer = null, legend = null;
-function drawGrid(g) {
+// keepRange: 바람 예측(1·2시간 뒤)은 그 시각 지도와 같은 색 범위로 칠해야 변화가 보임
+function drawGrid(g, keepRange) {
   if (gridLayer) map.removeLayer(gridLayer);
   if (!g || !g.values) return;
-  pmMin = g.min; pmMax = g.max;
+  if (!keepRange) { pmMin = g.min; pmMax = g.max; }
   // 칸 하나 = 그림의 점 하나. 0행이 남쪽이라 위아래를 뒤집어서 그림
   const cv = document.createElement('canvas');
   cv.width = g.cols; cv.height = g.rows;
@@ -121,10 +122,11 @@ function drawProfile(cv, best, shortest) {
   ctx.textAlign = 'right'; ctx.fillText(hi.toFixed(1), w - pad, 22); ctx.fillText(lo.toFixed(1), w - pad, h - pad);
 }
 
+let rankNote = 'PM2.5 월 평균';
 function showRanking(rank) {
   if (!rank) return;
   const list = (items, title) => `<div><h3>${title}</h3><ol>${items.map(i => `<li>${i.name}<span>${i.score.toFixed(1)}</span></li>`).join('')}</ol></div>`;
-  setHTML('ranking', `<h2>Top / Worst 지역 <small>PM2.5 평균</small></h2>
+  setHTML('ranking', `<h2>Top / Worst 지역 <small>${rankNote}</small></h2>
     <div class="rank">${list(rank.top, '깨끗한 곳')}${list(rank.worst, '나쁜 곳')}</div>`);
 }
 
@@ -162,13 +164,69 @@ function findRoute() {
   showCompare(drawRoutes(res));
 }
 
-function changePeriod() {
-  const res = JSON.parse(api.call('api_set_period', $('period').value));
-  if (res.ok === false) { setHTML('result', `<h2>경로 비교</h2><p class="error">${res.error}</p>`); return; }
+// 보기 상태: 월 평균 / 시각 지정(그 시각 · 1시간 뒤 · 2시간 뒤)
+const view = { mode: 'month', ahead: 0 };
+const LAST_DAY = { '02': 28, '05': 31, '08': 31, '11': 30 };
+
+function segValue(id, v) {
+  document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle('on', b.dataset.v === String(v)));
+}
+
+// 기간을 바꾸면 날짜 선택 범위도 그 달로 (처음에는 15일 정오)
+function resetDay() {
+  const [y, m] = $('period').value.split('-');
+  $('day').min = `${y}-${m}-01`;
+  $('day').max = `${y}-${m}-${LAST_DAY[m]}`;
+  $('day').value = `${y}-${m}-15`;
+}
+
+function refresh() {
+  let res;
+  if (view.mode === 'month') {
+    res = JSON.parse(api.call('api_set_period', $('period').value));
+  } else {
+    res = JSON.parse(api.call('api_set_time', $('day').value, parseInt($('hour').value), view.ahead));
+  }
+  if (res.ok === false) {
+    setHTML('result', `<h2>경로 비교</h2><p class="error">${res.error}</p>`);
+    $('aheadHint').textContent = '';
+    return;
+  }
+  const h = parseInt($('hour').value), d = $('day').value.slice(5).replace('-', '월 ') + '일';
+  rankNote = view.mode === 'month' ? 'PM2.5 월 평균'
+    : view.ahead ? `${d} ${(h + view.ahead) % 24}시 추정` : `${d} ${h}시`;
+  $('aheadHint').textContent = view.mode === 'time' && view.ahead
+    ? `${d} ${h}시 측정값을 S-DoT 바람 센서 ${res.winds}곳의 바람으로 ${view.ahead}시간 옮겨 추정한 지도입니다. 색 범위는 ${h}시 지도와 같습니다.`
+    : view.mode === 'time' ? '1·2시간 뒤는 바람으로 미세먼지 이동을 추정합니다 (실제 값과 비교해 오차 약 3% 감소).' : '';
   // 25m 격자를 그대로 보내면 260만 칸이라 100m 단위로 묶어서 받음
-  drawGrid(JSON.parse(api.call('api_get_grid', Math.max(1, Math.round(100 / (res.cellMeters || 100))))));
+  drawGrid(JSON.parse(api.call('api_get_grid', Math.max(1, Math.round(100 / (res.cellMeters || 100))))), view.mode === 'time' && view.ahead > 0);
   showRanking(JSON.parse(api.call('api_get_ranking', 5)));
   findRoute();
+}
+
+// 시각을 바꾸면 항상 '그 시각'부터 그려서 색 범위가 정해지므로, 1·2시간 뒤는 그 범위를 그대로 씀
+function setAhead(a) {
+  view.ahead = a;
+  segValue('ahead', a);
+  refresh();
+}
+
+function setupView() {
+  for (let h = 0; h < 24; h++) $('hour').insertAdjacentHTML('beforeend', `<option value="${h}">${h}시</option>`);
+  $('hour').value = '12';
+  resetDay();
+  $('period').addEventListener('change', () => { resetDay(); view.ahead = 0; segValue('ahead', 0); refresh(); });
+  $('view').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    view.mode = b.dataset.v; view.ahead = 0;
+    segValue('view', view.mode); segValue('ahead', 0);
+    $('timeBox').hidden = view.mode !== 'time';
+    refresh();
+  });
+  $('ahead').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setAhead(parseInt(b.dataset.v)); });
+  const timeChanged = () => { view.ahead = 0; segValue('ahead', 0); refresh(); };
+  $('day').addEventListener('change', timeChanged);
+  $('hour').addEventListener('change', timeChanged);
 }
 
 // 지역명 자동완성 (트라이)
@@ -196,7 +254,7 @@ async function startLive(createApp) {
   $('mode').textContent = '실시간 탐색 (WebAssembly)';
   setupSearch('start');
   setupSearch('goal');
-  $('period').addEventListener('change', changePeriod);
+  setupView();
   $('alpha').addEventListener('input', () => { $('alphaValue').textContent = parseFloat($('alpha').value).toFixed(1); });
   $('alpha').addEventListener('change', findRoute);
   map.on('click', e => {
@@ -210,7 +268,7 @@ async function startLive(createApp) {
     setPoint(which, e.latlng.lat, e.latlng.lng);
     findRoute();
   });
-  changePeriod();
+  refresh();
   // 처음 열었을 때 예시 경로 (종로구 → 강남구)
   setPoint('start', 37.571973, 127.005082, '종로구');
   setPoint('goal', 37.518147, 127.047296, '강남구');
@@ -228,6 +286,7 @@ async function loadJSON(url) {
 async function startStatic() {
   $('mode').textContent = '저장된 결과 보기 (./build/app 실행 결과)';
   ['period', 'start', 'goal', 'alpha'].forEach(id => { $(id).disabled = true; });
+  document.querySelectorAll('#view button').forEach(b => { b.disabled = true; });
   document.querySelector('.hint').textContent = '실시간 탐색은 WebAssembly 빌드(make wasm)나 배포된 페이지에서 됩니다.';
   const [grid, routes, ranking] = await Promise.all([
     loadJSON('data/grid.json'), loadJSON('data/routes.geojson'), loadJSON('data/ranking.json')
