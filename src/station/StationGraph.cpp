@@ -188,144 +188,63 @@ void StationGraph::estimateByWind(
         return;
     }
 
+    // 관측소마다 가장 가까운 S-DoT 바람 센서 (단계마다 같으므로 한 번만 찾음)
+    DynamicArray<int> windOf;
+    windOf.resize(stations_.size(), -1);
+    for (int i = 0; i < stations_.size(); ++i) {
+        double best = 0.0;
+        for (int w = 0; w < windStations_.size(); ++w) {
+            const Station& wind = windStations_[w];
+            if (wind.windDir < 0.0 || wind.windSpeed < 0.0) continue;
+            double meters = distanceMeters(stations_[i], wind);
+            if (windOf[i] < 0 || meters < best) {
+                windOf[i] = w;
+                best = meters;
+            }
+        }
+    }
+
+    // 농도 이류: 바람이 불어오는 쪽(바람 위쪽) 이웃의 값을 끌어옴
+    //   c_i ← c_i + Σ r_j × (c_j − c_i),  r_j = 풍속 × 3600 / 거리 × cos(각도), 합이 1을 넘으면 1로 맞춤
+    // (값을 밀어내기만 하면 바깥에서 들어오는 양이 없어 전체 농도가 계속 줄어듦 → 끌어오는 방식으로 바꿈)
     DynamicArray<double> current = outPm25;
 
     for (int step = 0; step < steps; ++step) {
-        DynamicArray<double> delta;
-        delta.resize(stations_.size(), 0.0);
+        DynamicArray<double> next = current;
 
         for (int i = 0; i < stations_.size(); ++i) {
-            if (current[i] < 0.0) {
-                continue;
-            }
-
-            int nearestWind = -1;
-            double nearestDistance = 0.0;
-
-            for (int w = 0; w < windStations_.size(); ++w) {
-                const Station& wind = windStations_[w];
-
-                if (wind.windDir < 0.0 ||
-                    wind.windSpeed < 0.0) {
-                    continue;
-                }
-
-                double meters =
-                    distanceMeters(stations_[i], wind);
-
-                if (nearestWind < 0 ||
-                    meters < nearestDistance) {
-                    nearestWind = w;
-                    nearestDistance = meters;
-                }
-            }
-
-            if (nearestWind < 0) {
-                continue;
-            }
-
-            const Station& wind =
-                windStations_[nearestWind];
-
-            // 풍향은 불어오는 방향이므로 실제 이동 방향은 +180도
-            double moveDirection =
-                std::fmod(
-                    wind.windDir + 180.0,
-                    360.0
-                );
+            if (current[i] < 0.0 || windOf[i] < 0) continue;
+            const Station& wind = windStations_[windOf[i]];
+            if (wind.windSpeed <= 0.0) continue;
 
             DynamicArray<double> ratios;
             ratios.resize(adj_[i].size(), 0.0);
-
             double ratioSum = 0.0;
 
             for (int e = 0; e < adj_[i].size(); ++e) {
                 const Edge& edge = adj_[i][e];
+                if (edge.to < 0 || edge.to >= stations_.size() ||
+                    edge.meters <= 0.0 || current[edge.to] < 0.0) continue;
 
-                if (edge.to < 0 ||
-                    edge.to >= stations_.size() ||
-                    edge.meters <= 0.0 ||
-                    current[edge.to] < 0.0) {
-                    continue;
-                }
+                // 풍향(불어오는 방향)과 i → 이웃 방향이 비슷하면 그 이웃이 바람 위쪽
+                double diff = angleDifference(wind.windDir, directionDegrees(stations_[i], stations_[edge.to]));
+                double cosine = std::cos(diff * PI / 180.0);
+                if (cosine <= 0.0) continue;
 
-                double edgeDirection =
-                    directionDegrees(
-                        stations_[i],
-                        stations_[edge.to]
-                    );
-
-                double diff =
-                    angleDifference(
-                        moveDirection,
-                        edgeDirection
-                    );
-
-                double cosine =
-                    std::cos(
-                        diff * PI / 180.0
-                    );
-
-                if (cosine <= 0.0) {
-                    continue;
-                }
-
-                double ratio =
-                    wind.windSpeed *
-                    3600.0 /
-                    edge.meters *
-                    cosine;
-
-                if (ratio > 0.5) {
-                    ratio = 0.5;
-                }
-
-                if (ratio < 0.0) {
-                    ratio = 0.0;
-                }
-
+                double ratio = wind.windSpeed * 3600.0 / edge.meters * cosine;
                 ratios[e] = ratio;
                 ratioSum += ratio;
             }
+            if (ratioSum <= 0.0) continue;
 
-            if (ratioSum <= 0.0) {
-                continue;
-            }
-
-            // 여러 이웃으로 동시에 이동해도 한 시간 총 유출은 최대 50%
-            double scale =
-                ratioSum > 0.5
-                ? 0.5 / ratioSum
-                : 1.0;
-
+            double scale = ratioSum > 1.0 ? 1.0 / ratioSum : 1.0;
             for (int e = 0; e < adj_[i].size(); ++e) {
-                double ratio = ratios[e] * scale;
-
-                if (ratio <= 0.0) {
-                    continue;
-                }
-
+                if (ratios[e] <= 0.0) continue;
                 int to = adj_[i][e].to;
-
-                double moved =
-                    current[i] * ratio;
-
-                delta[i] -= moved;
-                delta[to] += moved;
+                next[i] += ratios[e] * scale * (current[to] - current[i]);
             }
         }
-
-        for (int i = 0; i < current.size(); ++i) {
-            if (current[i] < 0.0) {
-                continue;
-            }
-
-            current[i] += delta[i];
-
-            if (current[i] < 0.0) {
-                current[i] = 0.0;
-            }
-        }
+        current = next;
     }
 
     outPm25 = current;

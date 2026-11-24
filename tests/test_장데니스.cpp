@@ -348,21 +348,14 @@ void testWindDirection() {
         predicted
     );
 
+    // 농도 이류: 바람 아래쪽(east)이 바람 위쪽(west)의 값을 끌어옴, west는 더 위쪽 이웃이 없어 그대로
     CHECK(predicted.size() == 2);
-    CHECK(predicted[0] < 100.0);
-    CHECK(predicted[1] > 0.0);
-
-    CHECK(
-        std::fabs(
-            predicted[0] +
-            predicted[1] -
-            100.0
-        ) < 1e-9
-    );
+    CHECK(std::fabs(predicted[0] - 100.0) < 1e-9);
+    CHECK(predicted[1] > 0.0 && predicted[1] <= 100.0);
 
     windStations.clear();
 
-    // 동쪽에서 불어오면 west -> east 방향으로는 이동하지 않아야 함
+    // 동쪽에서 불어오면 west가 east(0)의 값을 끌어와 낮아지고, east는 그대로
     wind.windDir = 90.0;
     windStations.push_back(wind);
 
@@ -377,17 +370,8 @@ void testWindDirection() {
         predicted
     );
 
-    CHECK(
-        std::fabs(
-            predicted[0] - 100.0
-        ) < 1e-9
-    );
-
-    CHECK(
-        std::fabs(
-            predicted[1]
-        ) < 1e-9
-    );
+    CHECK(predicted[0] < 100.0 && predicted[0] >= 0.0);
+    CHECK(std::fabs(predicted[1]) < 1e-9);
 }
 
 struct ErrorSum {
