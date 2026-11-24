@@ -24,17 +24,17 @@ int main() {
     CHECK(has(api_set_period("abc"), "\"ok\":false"));
     for (const char* p : {"2025-02", "2025-05", "2025-08", "2025-11"}) {
         std::string r = api_set_period(p);
-        CHECK(has(r, "\"ok\":true") && has(r, "\"rows\":345") && has(r, "\"cols\":477"));
+        CHECK(has(r, "\"ok\":true") && has(r, "\"rows\":1377") && has(r, "\"cols\":1905"));
     }
     CHECK(has(api_set_period("2025-02"), "\"ok\":true"));
 
     std::string grid = api_get_grid(5);
-    CHECK(has(grid, "\"rows\":69") && has(grid, "\"cols\":96") && has(grid, "\"values\":["));
+    CHECK(has(grid, "\"rows\":276") && has(grid, "\"cols\":381") && has(grid, "\"values\":["));
 
-    // 종로구 측정소 → 강남구 측정소 (중간발표 예시와 같은 결과)
+    // 종로구 측정소 → 강남구 측정소 (25m 격자 + 보행로 + 간이측정망, 최종 발표 예시)
     std::string route = api_find_route(37.571973, 127.005082, 37.518147, 127.047296, 1.0);
     CHECK(has(route, "\"type\":\"best\"") && has(route, "\"type\":\"shortest\""));
-    CHECK(has(route, "\"exposure\":149693.0") && has(route, "\"exposure\":154229.9"));
+    CHECK(has(route, "\"exposure\":208233.8") && has(route, "\"exposure\":213427.8"));
     CHECK(has(route, "\"pm25s\":["));
     CHECK(has(api_find_route(36.0, 127.0, 37.5, 127.0, 1.0), "\"ok\":false"));   // 서울 밖
 

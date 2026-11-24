@@ -1,5 +1,6 @@
 // 담당: 방지혁
 #include "data/DataLoader.h"
+#include "data/SpatialHash.h"
 #include "data/HashTable.h"
 #include "graph/DynamicArray.h"
 #include "common/Types.h"
@@ -319,61 +320,72 @@ void buildGrid(const DynamicArray<Station>& stations, double cellMeters, Grid& o
     out.passable.resize(cellCount, true); // 중간발표: 모든 칸 통행 가능 (OSM 반영은 최종)
 
     // IDW (역거리 가중 보간법): Σ(측정값 / 거리²) / Σ(1 / 거리²)
+    // 관측소가 많아(S-DoT 기온 약 960곳) 칸마다 전부 보면 느리므로, 공간 해시로 주변 관측소만 봄 (이준호)
+    //   미세먼지: 주변 7km × 7km(ring 3)에서 6곳 이상, 기온: 3km × 3km(ring 1)에서 6곳 이상이 되도록 범위를 넓힘
+    DynamicArray<bool> usePm, useTemp;
+    int pmCount = 0, tempCount = 0;
+    for (int i = 0; i < stations.size(); ++i) {
+        usePm.push_back(stations[i].pm25 >= 0.0);
+        useTemp.push_back(stations[i].temp > -900.0);
+        if (usePm[i]) ++pmCount;
+        if (useTemp[i]) ++tempCount;
+    }
+    SpatialHash pmHash(1000.0), tempHash(1000.0);
+    pmHash.build(stations, usePm);
+    tempHash.build(stations, useTemp);
+
+    const int MIN_STATIONS = 6, MAX_RING = 20;
+    DynamicArray<int> pmNear, tempNear;
+    // 같은 1km 버킷 안의 칸은 후보 관측소가 같으므로 버킷이 바뀔 때만 다시 찾음
+    auto gather = [&](const SpatialHash& hash, int total, int ring, double lat, double lng, DynamicArray<int>& out) {
+        int need = total < MIN_STATIONS ? total : MIN_STATIONS;
+        hash.nearby(lat, lng, ring, out);
+        while (out.size() < need && ring < MAX_RING) hash.nearby(lat, lng, ++ring, out);
+    };
+    int cachedRow = -100000, cachedCol = -100000;
+
     for (int r = 0; r < out.rows; ++r) {
         double cellLatPos = minLat + (r + 0.5) * latDegreeStep;   // 칸 중심
         for (int c = 0; c < out.cols; ++c) {
             double cellLngPos = minLng + (c + 0.5) * lngDegreeStep;
 
-            // PM2.5 IDW
-            double weightSumPm = 0.0;
-            double valueSumPm = 0.0;
-            bool foundExactPm = false;
-
-            // Temp IDW
-            double weightSumTemp = 0.0;
-            double valueSumTemp = 0.0;
-            bool foundExactTemp = false;
-
-            for (int i = 0; i < static_cast<int>(stations.size()); ++i) {
-                const Station& st = stations[i];
-                bool hasPm = (st.pm25 >= 0.0);
-                bool hasTemp = (st.temp > -900.0);
-                if (!hasPm && !hasTemp) continue;
-
-                // 위경도 차이를 미터로 바꿔서 거리 계산 (경도 1도가 위도 1도보다 짧음)
-                double dy = (cellLatPos - st.lat) * metersPerLat;
-                double dx = (cellLngPos - st.lng) * metersPerLng;
-                double distSq = dx * dx + dy * dy;
-
-                if (distSq < 1.0) {   // 1m 이내면 그 측정소 값 그대로
-                    if (hasPm && !foundExactPm) {
-                        out.pm25[r * out.cols + c] = st.pm25;
-                        foundExactPm = true;
-                    }
-                    if (hasTemp && !foundExactTemp) {
-                        out.temp[r * out.cols + c] = st.temp;
-                        foundExactTemp = true;
-                    }
-                    if (foundExactPm && foundExactTemp) break;
-                } else {
-                    double w = 1.0 / distSq;
-                    if (hasPm && !foundExactPm) {
-                        weightSumPm += w;
-                        valueSumPm += w * st.pm25;
-                    }
-                    if (hasTemp && !foundExactTemp) {
-                        weightSumTemp += w;
-                        valueSumTemp += w * st.temp;
-                    }
-                }
+            int br, bc;
+            pmHash.bucketOf(cellLatPos, cellLngPos, br, bc);
+            if (br != cachedRow || bc != cachedCol) {
+                gather(pmHash, pmCount, 3, cellLatPos, cellLngPos, pmNear);
+                gather(tempHash, tempCount, 1, cellLatPos, cellLngPos, tempNear);
+                cachedRow = br;
+                cachedCol = bc;
             }
 
             int idx = r * out.cols + c;
-            if (!foundExactPm && weightSumPm > 0.0) {
-                out.pm25[idx] = valueSumPm / weightSumPm;
-            }
-            if (!foundExactTemp && weightSumTemp > 0.0) {
-                out.temp[idx] = valueSumTemp / weightSumTemp;
+            for (int pass = 0; pass < 2; ++pass) {   // 0: PM2.5, 1: 기온
+                const DynamicArray<int>& near = pass == 0 ? pmNear : tempNear;
+                double weightSum = 0.0, valueSum = 0.0;
+                bool exact = false;
+                for (int k = 0; k < near.size(); ++k) {
+                    const Station& st = stations[near[k]];
+                    double value = pass == 0 ? st.pm25 : st.temp;
+
+                    // 위경도 차이를 미터로 바꿔서 거리 계산 (경도 1도가 위도 1도보다 짧음)
+                    double dy = (cellLatPos - st.lat) * metersPerLat;
+                    double dx = (cellLngPos - st.lng) * metersPerLng;
+                    double distSq = dx * dx + dy * dy;
+
+                    if (distSq < 1.0) {   // 1m 이내면 그 측정소 값 그대로
+                        valueSum = value;
+                        weightSum = 1.0;
+                        exact = true;
+                        break;
+                    }
+                    double w = 1.0 / distSq;
+                    weightSum += w;
+                    valueSum += w * value;
+                }
+                if (weightSum <= 0.0) continue;
+                double v = exact ? valueSum : valueSum / weightSum;
+                if (pass == 0) out.pm25[idx] = v;
+                else out.temp[idx] = v;
             }
         }
     }

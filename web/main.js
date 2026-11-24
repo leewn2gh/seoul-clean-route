@@ -165,7 +165,8 @@ function findRoute() {
 function changePeriod() {
   const res = JSON.parse(api.call('api_set_period', $('period').value));
   if (res.ok === false) { setHTML('result', `<h2>경로 비교</h2><p class="error">${res.error}</p>`); return; }
-  drawGrid(JSON.parse(api.call('api_get_grid', 1)));
+  // 25m 격자를 그대로 보내면 260만 칸이라 100m 단위로 묶어서 받음
+  drawGrid(JSON.parse(api.call('api_get_grid', Math.max(1, Math.round(100 / (res.cellMeters || 100))))));
   showRanking(JSON.parse(api.call('api_get_ranking', 5)));
   findRoute();
 }

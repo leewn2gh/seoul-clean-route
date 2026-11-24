@@ -1,16 +1,18 @@
 // 담당: 이준호
 // 콘솔 실행. 웹과 같은 App(src/app)을 써서 결과를 출력하고 web/data에 저장합니다.
-// 실행: ./build/app [출발지] [목적지] [alpha] [기간]
-//   예) ./build/app 종로 강남 1 2025-05   (이름은 앞 글자만 써도 됨, alpha 생략 1, 기간 생략 2025-02)
+// 실행: ./build/app [출발지] [목적지] [alpha] [기간] [격자 m]
+//   예) ./build/app 종로 강남 1 2025-05 25   (이름은 앞 글자만 써도 됨, alpha 생략 1, 기간 생략 2025-02, 격자 생략 25m)
+//   ./build/app --save-passable   → data/processed/passable_25m.bin (웹에 싣는 보행로 칸 파일) 만들기
 // 결과: web/data/grid.json, routes.geojson, ranking.json → 웹 화면이 WebAssembly 없이도 이 파일로 표시
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <string>
 #include "core/App.h"
 #include "common/Export.h"
 
 static const char* DATA_DIR = "data/processed/";
-static const int GRID_STEP = 1;   // 웹 표시용으로 묶을 칸 수 (1 = 묶지 않음)
+static const double SHOW_METERS = 100.0;   // 웹 지도에는 100m 단위로 묶어서 표시
 
 static bool findPlace(const App& app, const char* name, Place& out) {
     DynamicArray<Place> hits;
@@ -37,24 +39,40 @@ static void printRanking(const char* title, const DynamicArray<RankItem>& list) 
 static double msSince(std::clock_t t) { return (std::clock() - t) * 1000.0 / CLOCKS_PER_SEC; }
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "--save-passable") {
+        App app;
+        if (!app.init(DATA_DIR) || !app.setPeriod(2025, 2) || !app.hasRoads()) {
+            std::printf("보행로(osm_walk.csv)를 읽지 못했습니다.\n");
+            return 1;
+        }
+        char path[64];
+        std::snprintf(path, sizeof(path), "%spassable_%.0fm.bin", DATA_DIR, app.cellMeters());
+        bool ok = app.savePassable(path);
+        std::printf(ok ? "%s 저장 (통행 가능 %.1f%%)\n" : "%s 저장 실패\n", path, app.passableRatio() * 100);
+        return ok ? 0 : 1;
+    }
     const char* startName = argc > 1 ? argv[1] : "종로구";
     const char* goalName  = argc > 2 ? argv[2] : "강남구";
     double alpha          = argc > 3 ? std::atof(argv[3]) : 1.0;
     const char* period    = argc > 4 ? argv[4] : "2025-02";
+    double cell           = argc > 5 ? std::atof(argv[5]) : 25.0;
     int year = 2025, month = 2;
     if (std::sscanf(period, "%d-%d", &year, &month) != 2) { std::printf("기간 형식은 2025-02\n"); return 1; }
 
     App app;
+    app.setCellMeters(cell);
     std::clock_t t = std::clock();
     std::printf("[1] 데이터 읽기\n");
     if (!app.init(DATA_DIR)) { std::printf("  %s 의 데이터 파일을 읽지 못했습니다.\n", DATA_DIR); return 1; }
-    std::printf("  관측소 %d곳 (%.0f ms)\n", app.stationCount(), msSince(t));
+    std::printf("  자치구 %d곳, 간이측정망 %d곳, S-DoT %d곳 (%.0f ms)\n", app.countOf(StationType::DISTRICT),
+                app.countOf(StationType::SIMPLE), app.countOf(StationType::SDOT), msSince(t));
 
     std::printf("[2] 기간 %d년 %d월, 격자 생성 (%.0fm)\n", year, month, app.cellMeters());
     t = std::clock();
     if (!app.setPeriod(year, month)) { std::printf("  그 기간의 데이터가 없습니다.\n"); return 1; }
     const Grid& grid = app.grid();
-    std::printf("  %d × %d = %d칸 (%.0f ms)\n", grid.rows, grid.cols, grid.rows * grid.cols, msSince(t));
+    std::printf("  %d × %d = %d칸, 보행로 %s (통행 가능 %.1f%%) (%.0f ms)\n", grid.rows, grid.cols, grid.rows * grid.cols,
+                app.hasRoads() ? "반영" : "없음", app.passableRatio() * 100, msSince(t));
 
     std::printf("[3] 지역명 검색\n");
     Place s, g;
@@ -70,7 +88,7 @@ int main(int argc, char** argv) {
     if (shortest.exposure > 0) {
         double cut = (shortest.exposure - best.exposure) / shortest.exposure * 100.0;
         double more = shortest.distance > 0 ? (best.distance - shortest.distance) / shortest.distance * 100.0 : 0.0;
-        std::printf("  → 노출량 %.1f%% 감소, 거리 %.1f%% 증가 (%.0f ms)\n", cut, more, msSince(t));
+        std::printf("  → 노출량 %.1f%% 감소, 거리 %.1f%% 증가 (A* 꺼낸 횟수 %d, %.0f ms)\n", cut, more, app.lastPopCount(), msSince(t));
     }
 
     std::printf("[5] 지역 순위\n");
@@ -80,7 +98,8 @@ int main(int argc, char** argv) {
     printRanking("Worst 5", worst);
 
     std::printf("[6] 웹 지도 파일 저장\n");
-    bool ok = writeTextFile("web/data/grid.json", gridJSON(grid, GRID_STEP))
+    int step = (int)(SHOW_METERS / app.cellMeters() + 0.5);
+    bool ok = writeTextFile("web/data/grid.json", gridJSON(grid, step < 1 ? 1 : step))
            && writeRoutesGeoJSON(best, shortest, "web/data/routes.geojson")
            && writeRankingJSON(top, worst, "web/data/ranking.json");
     std::printf(ok ? "  web/data 에 저장 완료\n" : "  저장 실패 (web/data 폴더가 있는지 확인)\n");
