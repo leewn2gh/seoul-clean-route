@@ -14,14 +14,31 @@ public:
     // 관측소마다 가까운 k개와 연결
     StationGraph(const DynamicArray<Station>& stations, int k);
 
-    // 종합 환경 점수 Top k (좋은 순) / Worst k (나쁜 순)
+    // 미세먼지 지점 + 별도 S-DoT 바람 지점으로 그래프 구성
+    StationGraph(
+        const DynamicArray<Station>& stations,
+        const DynamicArray<Station>& windStations,
+        int k
+    );
+
+    // PM2.5 기준 Top k / Worst k
     void topK(int k, DynamicArray<RankItem>& out) const;
     void worstK(int k, DynamicArray<RankItem>& out) const;
 
-    // 풍향·풍속을 따라 이웃 관측소로 미세먼지가 이동한다고 보고 steps 단계 뒤 농도 추정
+    // 1단계 = 1시간. 가장 가까운 S-DoT 바람을 사용해 PM2.5 이동 추정
     void estimateByWind(int steps, DynamicArray<double>& outPm25) const;
 
 private:
+    struct Edge {
+        int to = -1;
+        double meters = 0.0;
+    };
+
     const DynamicArray<Station>& stations_;
-    // TODO(장데니스): 인접 리스트
+    DynamicArray<Station> windStations_;
+
+    // 각 관측소의 가까운 k개 이웃
+    DynamicArray<DynamicArray<Edge>> adj_;
+
+    void buildAdjacency(int k);
 };
