@@ -25,7 +25,7 @@ public:
     void topK(int k, DynamicArray<RankItem>& out) const;
     void worstK(int k, DynamicArray<RankItem>& out) const;
 
-    // 1단계 = 1시간. 가장 가까운 S-DoT 바람을 사용해 PM2.5 이동 추정
+    // 1단계 = 1시간. 가장 가까운 S-DoT 바람을 사용해 PM2.5 이동 추정 (이동 변화량의 30%만 반영)
     void estimateByWind(int steps, DynamicArray<double>& outPm25) const;
 
 private:

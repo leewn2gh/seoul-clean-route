@@ -7,6 +7,7 @@ namespace {
 
 const double PI = 3.14159265358979323846;
 const double METERS_PER_LAT = 111000.0;
+const double BLEND = 0.3;          // 바람 이동 변화량 반영 비율 (예측 검증으로 정함)
 
 struct NeighborItem {
     std::string name;
@@ -247,5 +248,10 @@ void StationGraph::estimateByWind(
         current = next;
     }
 
-    outPm25 = current;
+    // 보정: 이동한 양을 그대로 쓰면 1시간 뒤 오차가 지속 예측보다 13% 커짐 (너무 많이 옮김)
+    //   변화량의 BLEND(30%)만 반영하면 1·2·3시간 뒤 모두 지속 예측보다 정확해짐 (bench_station_wind)
+    for (int i = 0; i < stations_.size(); ++i) {
+        if (outPm25[i] < 0.0 || current[i] < 0.0) continue;
+        outPm25[i] += BLEND * (current[i] - outPm25[i]);
+    }
 }
