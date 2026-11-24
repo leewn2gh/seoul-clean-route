@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cmath>
 #include "graph/GridGraph.h"
+#include "graph/RoadMask.h"
 #include "common/TestData.h"
 
 static int failed = 0;
@@ -103,6 +104,55 @@ int main() {
     GridGraph og(open);
     og.neighbors(55, nb);
     CHECK(nb.size() == 8);
+
+    // applyRoads: 보행로 선분이 지나는 칸만 통행 가능
+    {
+        Grid rg = makeTestGrid(10, 10);
+        GridGraph rgraph(rg);
+        double aLat, aLng, bLat, bLng, cLat, cLng;
+        rgraph.cellCenter(2 * 10 + 1, aLat, aLng);   // 2행 1열
+        rgraph.cellCenter(2 * 10 + 7, bLat, bLng);   // 2행 7열 (가로 선분)
+        rgraph.cellCenter(5 * 10 + 3, cLat, cLng);   // 5행 3열 (선분 끝이 격자 밖으로 나감)
+
+        const char* path = "build/tests/roads_test.csv";
+        FILE* f = std::fopen(path, "w");
+        std::fprintf(f, "lat1,lng1,lat2,lng2\n");                                       // 머리줄은 건너뜀
+        std::fprintf(f, "%.7f,%.7f,%.7f,%.7f\n", aLat, aLng, bLat, bLng);
+        std::fprintf(f, "%.7f,%.7f,%.7f,%.7f\n", cLat, cLng, cLat, cLng - 5 * rg.cellLng);  // 왼쪽 밖까지
+        std::fprintf(f, "%.7f,%.7f,%.7f,%.7f\n", rg.minLat - 1, rg.minLng - 1, rg.minLat - 1, rg.minLng - 0.5);
+        std::fclose(f);
+
+        CHECK(applyRoads(path, rg));
+        CHECK(rg.passable.size() == 100);
+        int openCount = 0;
+        for (int k = 0; k < 100; ++k) if (rg.passable[k]) ++openCount;
+        CHECK(openCount == 7 + 4);                                     // 2행 1~7열 + 5행 0~3열
+        for (int c = 1; c <= 7; ++c) CHECK(rg.passable[2 * 10 + c]);
+        CHECK(!rg.passable[2 * 10 + 0] && !rg.passable[2 * 10 + 8]);
+        for (int c = 0; c <= 3; ++c) CHECK(rg.passable[5 * 10 + c]);
+        CHECK(!rg.passable[0]);                                   // 격자 밖 선분은 영향 없음
+
+        // 대각선 선분: 지나가는 칸이 끊기지 않아야 함 (이웃으로 이어져 있어야 길찾기가 됨)
+        Grid dg = makeTestGrid(10, 10);
+        GridGraph dgraph(dg);
+        dgraph.cellCenter(0, aLat, aLng);
+        dgraph.cellCenter(9 * 10 + 6, bLat, bLng);
+        f = std::fopen(path, "w");
+        std::fprintf(f, "%.7f,%.7f,%.7f,%.7f\n", aLat, aLng, bLat, bLng);
+        std::fclose(f);
+        CHECK(applyRoads(path, dg));
+        for (int r = 0; r < 10; ++r) {
+            bool any = false;
+            for (int c = 0; c < 10; ++c) if (dg.passable[r * 10 + c]) any = true;
+            CHECK(any);                                           // 모든 행에 열린 칸이 있음
+        }
+
+        // 파일이 없으면 false, passable은 그대로
+        Grid keep = makeTestGrid(3, 3);
+        CHECK(!applyRoads("build/tests/no_such_file.csv", keep));
+        CHECK(keep.passable.size() == 9 && keep.passable[4]);
+        std::remove(path);
+    }
 
     std::printf(failed == 0 ? "  모두 통과\n" : "  실패 %d개\n", failed);
     return failed == 0 ? 0 : 1;
