@@ -25,6 +25,25 @@
             <option value="2025-11">2025년 11월</option>
           </select>
         </label>
+        <div class="field">
+          <span>보기</span>
+          <div class="seg" id="view">
+            <button type="button" data-v="month" class="on">월 평균</button><button type="button" data-v="time">시각 지정</button>
+          </div>
+        </div>
+        <div id="timeBox" class="form" hidden>
+          <div class="field">
+            <span>날짜 · 시각</span>
+            <div class="row"><input id="day" type="date"><select id="hour"></select></div>
+          </div>
+          <div class="field">
+            <span>바람 예측</span>
+            <div class="seg" id="ahead">
+              <button type="button" data-v="0" class="on">그 시각</button><button type="button" data-v="1">1시간 뒤</button><button type="button" data-v="2">2시간 뒤</button>
+            </div>
+          </div>
+          <p class="hint" id="aheadHint"></p>
+        </div>
         <label class="field place">
           <span><i class="dot start"></i>출발</span>
           <input id="start" type="text" placeholder="지역명 또는 지도 클릭" autocomplete="off">

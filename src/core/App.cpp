@@ -26,7 +26,8 @@ bool App::init(const std::string& dataDir) {
         std::snprintf(name, sizeof(name), "_2025_%02d.csv", MONTHS[i]);
         if (loader_.loadDistrict(dataDir + "air" + name)) ++loaded;
         if (simple) loader_.loadSimple(dataDir + "simple" + name);
-        if (sdot) loader_.loadSdot(dataDir + "sdot" + name);   // 웹에는 S-DoT를 싣지 않음 (용량)
+        // S-DoT 전체(월 30MB)가 없으면 바람 있는 줄만 뽑은 sdot_wind_*(월 2MB, 웹용)
+        if (sdot && !loader_.loadSdot(dataDir + "sdot" + name)) loader_.loadSdot(dataDir + "sdot_wind" + name);
     }
 
     // 지역명 검색: 자치구 측정소 이름을 트라이에 넣음 (간이·S-DoT 번호는 넣지 않음)
@@ -100,25 +101,55 @@ bool App::setPeriod(int year, int month) {
     DateTime to;   to.year   = year; to.month   = month; to.day   = 31; to.hour   = 23;
     DynamicArray<Station> next;
     loader_.averageStations(from, to, next);
+    return rebuild(next, 0);
+}
 
+bool App::setTime(int year, int month, int day, int hour, int ahead) {
+    DateTime t; t.year = year; t.month = month; t.day = day; t.hour = hour;
+    DynamicArray<Station> next;
+    loader_.averageStations(t, t, next);
+    return rebuild(next, ahead);
+}
+
+bool App::rebuild(DynamicArray<Station>& next, int ahead) {
     bool any = false;
     for (int i = 0; i < next.size(); ++i) {
         if (next[i].type == StationType::DISTRICT && next[i].pm25 >= 0) { any = true; break; }
     }
-    if (!any) return false;   // 그 달 데이터가 없음
+    if (!any) return false;   // 그 기간·시각 데이터가 없음
+
+    // 바람 추정: 미세먼지가 있는 자치구·간이 측정소 값을 ahead시간 뒤 값으로 바꿈
+    DynamicArray<Station> winds;
+    for (int i = 0; i < next.size(); ++i) {
+        const Station& s = next[i];
+        if (s.type == StationType::SDOT && s.windDir >= 0 && s.windSpeed >= 0) winds.push_back(s);
+    }
+    if (ahead > 0) {
+        if (winds.empty()) return false;   // 그 시각 바람 데이터가 없음
+        DynamicArray<Station> pm;
+        DynamicArray<int> where;           // pm[j]가 next의 몇 번째인지
+        for (int i = 0; i < next.size(); ++i) {
+            if (next[i].type != StationType::SDOT && next[i].pm25 >= 0) { pm.push_back(next[i]); where.push_back(i); }
+        }
+        StationGraph g(pm, winds, 5);
+        DynamicArray<double> moved;
+        g.estimateByWind(ahead, moved);
+        for (int j = 0; j < where.size(); ++j) {
+            if (moved[j] >= 0) next[where[j]].pm25 = moved[j];
+        }
+    }
 
     delete graph_;        graph_ = nullptr;
     delete stationGraph_; stationGraph_ = nullptr;
 
     stations_ = next;
+    winds_ = winds;
     districts_.clear();
     pmStations_.clear();
-    winds_.clear();
     for (int i = 0; i < stations_.size(); ++i) {
         const Station& s = stations_[i];
         if (s.type == StationType::DISTRICT) districts_.push_back(s);
         if (s.type != StationType::SDOT && s.pm25 >= 0) pmStations_.push_back(s);
-        if (s.type == StationType::SDOT && s.windDir >= 0 && s.windSpeed >= 0) winds_.push_back(s);
     }
 
     grid_ = Grid();

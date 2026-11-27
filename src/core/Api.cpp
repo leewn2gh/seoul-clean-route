@@ -52,6 +52,20 @@ API const char* api_set_period(const char* period) {
     return give(buf);
 }
 
+// 특정 시각 보기: date "2025-02-15", hour 0~23, ahead 0(그 시각) · 1 · 2(바람으로 추정한 몇 시간 뒤)
+API const char* api_set_time(const char* date, int hour, int ahead) {
+    if (!app) return give(error("api_init을 먼저 호출하세요"));
+    int year = 0, month = 0, day = 0;
+    if (!date || std::sscanf(date, "%d-%d-%d", &year, &month, &day) != 3) return give(error("날짜 형식은 2025-02-15"));
+    if (!app->setTime(year, month, day, hour, ahead))
+        return give(error(ahead > 0 ? "그 시각의 측정값이나 바람 데이터가 없습니다" : "그 시각의 측정값이 없습니다"));
+    const Grid& g = app->grid();
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "{\"ok\":true,\"rows\":%d,\"cols\":%d,\"cellMeters\":%.0f,\"winds\":%d}",
+                  g.rows, g.cols, app->cellMeters(), app->windCount());
+    return give(buf);
+}
+
 // 지도 색칠용 칸별 미세먼지. step×step 칸을 하나로 묶어서 돌려줌
 API const char* api_get_grid(int step) {
     if (!app) return give("null");
